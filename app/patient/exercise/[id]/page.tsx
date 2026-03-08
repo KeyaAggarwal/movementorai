@@ -61,8 +61,83 @@ type ExerciseData = {
   focus_joints: string[];
   sets_per_day: number;
   reps_per_set: number;
-  steps: { id: number; label: string; description?: string }[];
+  steps: { id: number; label: string; description?: string; start_frame?: number; end_frame?: number }[];
 };
+
+function getStepRanges(
+  steps: { id: number; start_frame?: number; end_frame?: number }[],
+  totalFrames: number
+): Array<{ stepId: number; start: number; end: number }> {
+  if (steps.length === 0) return [{ stepId: 1, start: 0, end: Math.max(0, totalFrames - 1) }];
+
+  const hasExplicitRanges = steps.every((step) =>
+    typeof step.start_frame === 'number' && typeof step.end_frame === 'number'
+  );
+
+  if (hasExplicitRanges) {
+    return steps
+      .map((step) => ({
+        stepId: step.id,
+        start: Math.max(0, Math.min(totalFrames - 1, Math.round(Number(step.start_frame)))),
+        end: Math.max(0, Math.min(totalFrames - 1, Math.round(Number(step.end_frame)))),
+      }))
+      .map((step) => ({
+        ...step,
+        end: Math.max(step.start, step.end),
+      }))
+      .sort((a, b) => a.start - b.start);
+  }
+
+  const chunk = Math.max(1, Math.floor(totalFrames / steps.length));
+  return steps.map((step, idx) => ({
+    stepId: step.id,
+    start: idx * chunk,
+    end: idx === steps.length - 1 ? Math.max(0, totalFrames - 1) : Math.max(0, (idx + 1) * chunk - 1),
+  }));
+}
+
+function getStepIndexById(
+  stepId: number,
+  ranges: Array<{ stepId: number; start: number; end: number }>
+): number {
+  const idx = ranges.findIndex((item) => item.stepId === stepId);
+  return idx >= 0 ? idx : 0;
+}
+
+function getStepForFrameIndex(
+  frameIndex: number,
+  ranges: Array<{ stepId: number; start: number; end: number }>
+): number {
+  const range = ranges.find((item) => frameIndex >= item.start && frameIndex <= item.end);
+  return range?.stepId ?? ranges[ranges.length - 1]?.stepId ?? 1;
+}
+
+function getMaxFrameNumber(frames: PoseFrame[]): number {
+  if (!frames.length) return 0;
+  let maxFrame = 0;
+  for (const frame of frames) {
+    const value = Number(frame.frame);
+    if (Number.isFinite(value) && value > maxFrame) maxFrame = value;
+  }
+  return maxFrame;
+}
+
+function getClosestFrameByNumber(frames: PoseFrame[], frameNumber: number): PoseFrame {
+  if (frames.length === 0) return GHOST_FRAMES[0];
+  let closest = frames[0];
+  let smallestDistance = Math.abs(Number(frames[0].frame) - frameNumber);
+
+  for (let index = 1; index < frames.length; index += 1) {
+    const candidate = frames[index];
+    const distance = Math.abs(Number(candidate.frame) - frameNumber);
+    if (distance < smallestDistance) {
+      smallestDistance = distance;
+      closest = candidate;
+    }
+  }
+
+  return closest;
+}
 
 function mapMotionToPoseFrames(motion: any): PoseFrame[] {
   if (!motion || !Array.isArray(motion.frames)) return [];
@@ -183,6 +258,14 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const repMachineRef = useRef(new RepStateMachine(EXERCISE.steps.length));
   const romTrackerRef = useRef(createROMTracker());
   const ghostFrameRef = useRef(0);
+  const speechRecognitionRef = useRef<any>(null);
+  const speechRecognitionRunningRef = useRef(false);
+  const shouldListenForStartRef = useRef(false);
+  const sessionStateRef = useRef<'idle' | 'active' | 'paused' | 'done'>('idle');
+  const currentStepRef = useRef(1);
+  const awaitingNextStepStartRef = useRef(false);
+  const pendingStepStartFrameRef = useRef<number | null>(null);
+  const pendingStepIdRef = useRef<number | null>(null);
   const accuracyBufferRef = useRef<number[]>([]);
 
   const [detectorReady, setDetectorReady] = useState(false);
@@ -201,9 +284,126 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const [isAlignedToGuide, setIsAlignedToGuide] = useState(false);
   const [alignmentScore, setAlignmentScore] = useState(0);
   const [alignCountdown, setAlignCountdown] = useState<number | null>(null);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [awaitingNextStepStart, setAwaitingNextStepStart] = useState(false);
+  const [speechEnabled, setSpeechEnabled] = useState(false);
+  const [heardStart, setHeardStart] = useState(false);
   const [exercise, setExercise] = useState<ExerciseData>(EXERCISE);
   const [ghostFrames, setGhostFrames] = useState<PoseFrame[]>(GHOST_FRAMES);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const resumeAfterStepPause = useCallback(() => {
+    if (pendingStepIdRef.current !== null) {
+      setCurrentStep(pendingStepIdRef.current);
+      currentStepRef.current = pendingStepIdRef.current;
+      pendingStepIdRef.current = null;
+    }
+    if (pendingStepStartFrameRef.current !== null) {
+      ghostFrameRef.current = pendingStepStartFrameRef.current;
+      pendingStepStartFrameRef.current = null;
+    }
+    setAwaitingNextStepStart(false);
+    awaitingNextStepStartRef.current = false;
+    setHeardStart(false);
+    setFeedback({ message: 'Step started. Continue following the guide.', severity: 'good' });
+  }, []);
+
+  useEffect(() => {
+    sessionStateRef.current = sessionState;
+  }, [sessionState]);
+
+  useEffect(() => {
+    currentStepRef.current = currentStep;
+  }, [currentStep]);
+
+  useEffect(() => {
+    awaitingNextStepStartRef.current = awaitingNextStepStart;
+  }, [awaitingNextStepStart]);
+
+  useEffect(() => {
+    const SpeechRecognitionCtor = typeof window !== 'undefined'
+      ? ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
+      : null;
+    setSpeechEnabled(Boolean(SpeechRecognitionCtor));
+  }, []);
+
+  const startSpeechRecognition = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition || speechRecognitionRunningRef.current) return;
+    try {
+      recognition.start();
+      speechRecognitionRunningRef.current = true;
+    } catch {}
+  }, []);
+
+  const stopSpeechRecognition = useCallback(() => {
+    const recognition = speechRecognitionRef.current;
+    if (!recognition || !speechRecognitionRunningRef.current) return;
+    try {
+      recognition.stop();
+    } catch {}
+    speechRecognitionRunningRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    if (!speechEnabled) {
+      speechRecognitionRef.current = null;
+      speechRecognitionRunningRef.current = false;
+      return;
+    }
+
+    const SpeechRecognitionCtor = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognitionCtor) return;
+
+    const recognition = new SpeechRecognitionCtor();
+    recognition.lang = 'en-US';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onresult = (event: any) => {
+      if (!shouldListenForStartRef.current) return;
+
+      const transcript = Array.from(event.results)
+        .map((result: any) => result[0]?.transcript || '')
+        .join(' ')
+        .toLowerCase();
+
+      if (transcript.includes('start')) {
+        setHeardStart(true);
+        resumeAfterStepPause();
+        shouldListenForStartRef.current = false;
+      }
+    };
+
+    recognition.onerror = () => {};
+    recognition.onend = () => {
+      speechRecognitionRunningRef.current = false;
+      if (shouldListenForStartRef.current && sessionStateRef.current === 'active') {
+        window.setTimeout(() => {
+          if (shouldListenForStartRef.current && sessionStateRef.current === 'active') {
+            startSpeechRecognition();
+          }
+        }, 120);
+      }
+    };
+
+    speechRecognitionRef.current = recognition;
+
+    return () => {
+      try { recognition.stop(); } catch {}
+      speechRecognitionRef.current = null;
+      speechRecognitionRunningRef.current = false;
+    };
+  }, [speechEnabled, resumeAfterStepPause, startSpeechRecognition]);
+
+  useEffect(() => {
+    shouldListenForStartRef.current = speechEnabled && sessionState === 'active' && awaitingNextStepStart;
+    if (shouldListenForStartRef.current) {
+      startSpeechRecognition();
+    } else {
+      stopSpeechRecognition();
+    }
+  }, [speechEnabled, sessionState, awaitingNextStepStart, startSpeechRecognition, stopSpeechRecognition]);
 
   useEffect(() => {
     let mounted = true;
@@ -393,10 +593,65 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
       ctx.drawImage(video, 0, 0, W, H);
       ctx.restore();
 
-      // Get ghost frame (cycles through motion data)
+      // Get ghost frame (step-range driven in video-frame number space)
       const activeGhostFrames = ghostFrames.length > 0 ? ghostFrames : GHOST_FRAMES;
-      const ghostFrame = activeGhostFrames[ghostFrameRef.current % activeGhostFrames.length];
-      ghostFrameRef.current += 1;
+      const maxFrameNumber = getMaxFrameNumber(activeGhostFrames);
+      const timelineFrameCount = Math.max(1, maxFrameNumber + 1);
+      const stepRanges = getStepRanges(exercise.steps, timelineFrameCount);
+
+      const currentStepIndex = getStepIndexById(currentStepRef.current, stepRanges);
+      const currentRange = stepRanges[currentStepIndex] ?? stepRanges[0];
+
+      if (ghostFrameRef.current < currentRange.start) {
+        ghostFrameRef.current = currentRange.start;
+      }
+      if (ghostFrameRef.current > currentRange.end) {
+        ghostFrameRef.current = currentRange.end;
+      }
+
+      if (!awaitingNextStepStartRef.current) {
+        const nextFrame = ghostFrameRef.current + playbackSpeed;
+
+        if (nextFrame >= currentRange.end) {
+          ghostFrameRef.current = currentRange.end;
+
+          const isLastStep = currentStepIndex >= stepRanges.length - 1;
+          const nextStepIndex = isLastStep ? 0 : currentStepIndex + 1;
+          const nextStepId = stepRanges[nextStepIndex].stepId;
+          const nextStepStart = stepRanges[nextStepIndex].start;
+
+          if (isLastStep) {
+            const repDone = repMachineRef.current.update(nextStepId);
+            if (repDone) {
+              const newReps = repMachineRef.current.repCount;
+              setRepCount(newReps);
+              if (newReps >= exercise.reps_per_set) {
+                handleSetComplete();
+              }
+            }
+          }
+
+          setAwaitingNextStepStart(true);
+          awaitingNextStepStartRef.current = true;
+
+          pendingStepIdRef.current = nextStepId;
+          pendingStepStartFrameRef.current = nextStepStart;
+
+          setFeedback({
+            message: speechEnabled
+              ? `Step ${nextStepId} ready. Say "start" to continue.`
+              : `Step ${nextStepId} ready. Press Start Next Step to continue.`,
+            severity: 'warn',
+          });
+
+          rafRef.current = requestAnimationFrame(loop);
+          return;
+        }
+
+        ghostFrameRef.current = nextFrame;
+      }
+      const renderFrameNumber = Math.max(0, Math.floor(ghostFrameRef.current));
+      const ghostFrame = getClosestFrameByNumber(activeGhostFrames, renderFrameNumber);
 
       // Detect patient pose
       const result = await detectPose(video);
@@ -436,38 +691,30 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
           setRom({ current: Math.round(elbowAngle), max: Math.round(romTrackerRef.current.getROM()) });
         }
 
-        // Step detection (simplified: use ghost frame position as proxy)
-        const frameProgress = ghostFrameRef.current % activeGhostFrames.length;
-        const normalized = frameProgress / Math.max(1, activeGhostFrames.length);
-        const stepCount = Math.max(1, exercise.steps.length);
-        const newStep = Math.min(stepCount, Math.floor(normalized * stepCount) + 1);
-
-        // Rep machine
-        const repDone = repMachineRef.current.update(newStep);
-        if (repDone) {
-          const newReps = repMachineRef.current.repCount;
-          setRepCount(newReps);
-          if (newReps >= exercise.reps_per_set) {
-            handleSetComplete();
-          }
-        }
+        const waitingForStepStart = awaitingNextStepStartRef.current;
 
         // Update state
-        setCurrentStep(newStep);
+        if (!waitingForStepStart) {
+          const stableStep = currentRange.stepId;
+          setCurrentStep(stableStep);
+          currentStepRef.current = stableStep;
+        }
         setAccuracyScore(avgScore);
         setIncorrectJoints(comparison.incorrect_joints);
 
         // Feedback
-        if (comparison.incorrect_joints.length === 0) {
-          setFeedback({ message: 'Great form! Keep it up.', severity: 'good' });
-        } else {
-          const j = comparison.incorrect_joints[0].replace('_', ' ');
-          setFeedback({
-            message: avgScore < 70
-              ? `Adjust your ${j} — try to match the guide skeleton.`
-              : `Almost there — slight correction needed at ${j}.`,
-            severity: avgScore < 70 ? 'error' : 'warn',
-          });
+        if (!waitingForStepStart) {
+          if (comparison.incorrect_joints.length === 0) {
+            setFeedback({ message: 'Great form! Keep it up.', severity: 'good' });
+          } else {
+            const j = comparison.incorrect_joints[0].replace('_', ' ');
+            setFeedback({
+              message: avgScore < 70
+                ? `Adjust your ${j} — try to match the guide skeleton.`
+                : `Almost there — slight correction needed at ${j}.`,
+              severity: avgScore < 70 ? 'error' : 'warn',
+            });
+          }
         }
       } else {
         // No pose found
@@ -486,7 +733,14 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
     };
 
     rafRef.current = requestAnimationFrame(loop);
-  }, [sessionState, ghostFrames, exercise.steps.length, exercise.reps_per_set]);
+  }, [
+    sessionState,
+    ghostFrames,
+    exercise.steps,
+    exercise.reps_per_set,
+    playbackSpeed,
+    speechEnabled,
+  ]);
 
   useEffect(() => {
     if (sessionState === 'active') {
@@ -521,6 +775,18 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
       return;
     }
     setSessionState('active');
+    setAwaitingNextStepStart(false);
+    awaitingNextStepStartRef.current = false;
+    setHeardStart(false);
+    const activeGhostFrames = ghostFrames.length > 0 ? ghostFrames : GHOST_FRAMES;
+    const maxFrameNumber = getMaxFrameNumber(activeGhostFrames);
+    const stepRanges = getStepRanges(exercise.steps, Math.max(1, maxFrameNumber + 1));
+    const firstStep = stepRanges[0] ?? { stepId: 1, start: 0, end: 0 };
+    ghostFrameRef.current = firstStep.start;
+    pendingStepIdRef.current = null;
+    pendingStepStartFrameRef.current = null;
+    setCurrentStep(firstStep.stepId);
+    currentStepRef.current = firstStep.stepId;
     setFeedback({ message: 'Session started — follow the ghost skeleton!', severity: 'good' });
   };
 
@@ -668,11 +934,43 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
                 <button onClick={handlePause} className="btn-ghost flex-1 flex items-center justify-center gap-2 py-3">
                   {sessionState === 'active' ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Resume</>}
                 </button>
+                {awaitingNextStepStart && (
+                  <button
+                    onClick={resumeAfterStepPause}
+                    className="btn-primary flex items-center gap-2 py-3 px-4"
+                  >
+                    <Play className="w-4 h-4" />
+                    Start Next Step
+                  </button>
+                )}
                 <button onClick={handleStop} className="btn-ghost flex items-center gap-2 py-3 px-4 text-red-400 border-red-500/20 hover:border-red-500/40">
                   <Square className="w-4 h-4" />
                   End
                 </button>
               </>
+            )}
+          </div>
+
+          <div className="card-sm mt-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="label">Exercise Speed</div>
+              <div className="text-xs font-mono text-teal-300">{playbackSpeed.toFixed(2)}x</div>
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={1.8}
+              step={0.05}
+              value={playbackSpeed}
+              onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+              className="w-full accent-teal-300"
+            />
+            {awaitingNextStepStart && (
+              <div className="text-xs text-teal-500 mt-2 font-mono">
+                {speechEnabled
+                  ? (heardStart ? 'Heard "start". Resuming…' : 'Say "start" to continue this step.')
+                  : 'Speech command unavailable. Use Start Next Step button.'}
+              </div>
             )}
           </div>
         </div>
