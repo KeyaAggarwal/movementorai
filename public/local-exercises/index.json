@@ -1,0 +1,88 @@
+[
+  {
+    "id": "a8qm1p6xwbommh2dutd",
+    "name": "kfjsdljf",
+    "category_id": null,
+    "category_name": null,
+    "description": "d",
+    "body_part": "Core",
+    "injury_category": "d",
+    "focus_joints": [
+      "d"
+    ],
+    "steps": [
+      {
+        "id": 1,
+        "label": "Start Position",
+        "start_frame": 0,
+        "end_frame": 107
+      },
+      {
+        "id": 2,
+        "label": "Main Movement",
+        "start_frame": 108,
+        "end_frame": 214
+      },
+      {
+        "id": 3,
+        "label": "Return to Neutral",
+        "start_frame": 215,
+        "end_frame": 321
+      }
+    ],
+    "video_url": "/local-exercises/a8qm1p6xwbommh2dutd/video.mov",
+    "motion_data_url": "/local-exercises/a8qm1p6xwbommh2dutd/keypoints.json",
+    "thumbnail_url": "",
+    "created_by": null,
+    "created_at": "2026-03-08T01:19:12.193Z"
+  },
+  {
+    "id": "tr0gzmft3mmmmh3u1b9",
+    "name": "uihiuh",
+    "category_id": null,
+    "category_name": null,
+    "description": "huyyutyut",
+    "body_part": "Arm",
+    "injury_category": "uhiuh",
+    "focus_joints": [
+      "wrist"
+    ],
+    "steps": [
+      {
+        "id": 1,
+        "label": "pull arm back ",
+        "start_frame": 0,
+        "end_frame": 102
+      },
+      {
+        "id": 2,
+        "label": "pull arm forward",
+        "start_frame": 102,
+        "end_frame": 143
+      },
+      {
+        "id": 3,
+        "label": "turn to side",
+        "start_frame": 143,
+        "end_frame": 180
+      },
+      {
+        "id": 4,
+        "label": "repeat action",
+        "start_frame": 181,
+        "end_frame": 320
+      },
+      {
+        "id": 5,
+        "label": "neutral",
+        "start_frame": 320,
+        "end_frame": 321
+      }
+    ],
+    "video_url": "/local-exercises/tr0gzmft3mmmmh3u1b9/video.mp4",
+    "motion_data_url": "/local-exercises/tr0gzmft3mmmmh3u1b9/keypoints.json",
+    "thumbnail_url": "",
+    "created_by": null,
+    "created_at": "2026-03-08T01:59:46.725Z"
+  }
+]
