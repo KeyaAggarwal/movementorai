@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from 'react';
 import { Plus, UserPlus, ClipboardList, CheckCircle, X } from 'lucide-react';
+import { SARAH_PATIENT_ID } from '@/lib/demo-constants';
 
 const MOCK_PATIENTS = [
-  { id: 'p1', name: 'Sarah Chen', injury: 'Elbow Injury', assigned: 2, compliance: 87, lastSession: '2 hours ago' },
+  { id: SARAH_PATIENT_ID, name: 'Sarah Chen', injury: 'Elbow Injury', assigned: 2, compliance: 87, lastSession: '2 hours ago' },
   { id: 'p2', name: 'Marcus Williams', injury: 'Knee Injury', assigned: 1, compliance: 72, lastSession: 'Yesterday' },
   { id: 'p3', name: 'Emma Rodriguez', injury: 'Shoulder Injury', assigned: 3, compliance: 94, lastSession: '1 hour ago' },
   { id: 'p4', name: 'James Park', injury: 'Lower Back', assigned: 2, compliance: 60, lastSession: '3 days ago' },
@@ -52,6 +53,13 @@ export default function PatientsPage() {
 
     loadExercises();
     return () => { mounted = false; };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const preselectedExercise = new URLSearchParams(window.location.search).get('assign');
+    if (!preselectedExercise) return;
+    setAssignForm((current) => ({ ...current, exercise_id: preselectedExercise }));
   }, []);
 
   const handleAssign = async () => {

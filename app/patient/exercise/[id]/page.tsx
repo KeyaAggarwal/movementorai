@@ -86,6 +86,71 @@ function mapMotionToPoseFrames(motion: any): PoseFrame[] {
   });
 }
 
+function mirrorJoints(joints: Record<string, Keypoint>): Record<string, Keypoint> {
+  const mirrored: Record<string, Keypoint> = {};
+  for (const [name, joint] of Object.entries(joints)) {
+    mirrored[name] = {
+      ...joint,
+      x: 1 - joint.x,
+    };
+  }
+  return mirrored;
+}
+
+function getAlignmentHint(
+  patientJoints: Record<string, Keypoint>,
+  ghostJoints: Record<string, Keypoint>
+): string {
+  const centerOf = (joints: Record<string, Keypoint>) => {
+    const ls = joints.left_shoulder;
+    const rs = joints.right_shoulder;
+    const lh = joints.left_hip;
+    const rh = joints.right_hip;
+    const anchors = [ls, rs, lh, rh].filter(Boolean) as Keypoint[];
+    if (anchors.length === 0) {
+      const all = Object.values(joints);
+      if (all.length === 0) return null;
+      const x = all.reduce((sum, item) => sum + item.x, 0) / all.length;
+      const y = all.reduce((sum, item) => sum + item.y, 0) / all.length;
+      return { x, y };
+    }
+    const x = anchors.reduce((sum, item) => sum + item.x, 0) / anchors.length;
+    const y = anchors.reduce((sum, item) => sum + item.y, 0) / anchors.length;
+    return { x, y };
+  };
+
+  const patientCenter = centerOf(patientJoints);
+  const ghostCenter = centerOf(ghostJoints);
+  if (!patientCenter || !ghostCenter) return 'Step fully into frame and face the camera.';
+
+  const hints: string[] = [];
+  const dx = ghostCenter.x - patientCenter.x;
+  const dy = ghostCenter.y - patientCenter.y;
+
+  if (dx > 0.04) hints.push('move right');
+  else if (dx < -0.04) hints.push('move left');
+
+  if (dy > 0.05) hints.push('move down');
+  else if (dy < -0.05) hints.push('move up');
+
+  const shoulderDist = (joints: Record<string, Keypoint>) => {
+    const ls = joints.left_shoulder;
+    const rs = joints.right_shoulder;
+    if (!ls || !rs) return null;
+    return Math.hypot(ls.x - rs.x, ls.y - rs.y);
+  };
+
+  const patientScale = shoulderDist(patientJoints);
+  const ghostScale = shoulderDist(ghostJoints);
+  if (patientScale && ghostScale) {
+    if (patientScale < ghostScale * 0.78) hints.push('move closer to camera');
+    else if (patientScale > ghostScale * 1.28) hints.push('step slightly back');
+  }
+
+  if (hints.length === 0) return 'Fine tune your joints to match the guide outline.';
+  return `Try to ${hints.join(' and ')}.`;
+}
+
 // ─── Accuracy Ring SVG ───────────────────────────────────────────────────────
 function AccuracyRing({ score }: { score: number }) {
   const r = 32, circ = 2 * Math.PI * r;
@@ -113,6 +178,8 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
+  const idleRafRef = useRef<number>(0);
+  const alignmentUpdateRef = useRef<number>(0);
   const repMachineRef = useRef(new RepStateMachine(EXERCISE.steps.length));
   const romTrackerRef = useRef(createROMTracker());
   const ghostFrameRef = useRef(0);
@@ -131,6 +198,9 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const [elapsed, setElapsed] = useState(0);
   const [muted, setMuted] = useState(false);
   const [sessionComplete, setSessionComplete] = useState(false);
+  const [isAlignedToGuide, setIsAlignedToGuide] = useState(false);
+  const [alignmentScore, setAlignmentScore] = useState(0);
+  const [alignCountdown, setAlignCountdown] = useState<number | null>(null);
   const [exercise, setExercise] = useState<ExerciseData>(EXERCISE);
   const [ghostFrames, setGhostFrames] = useState<PoseFrame[]>(GHOST_FRAMES);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -203,8 +273,103 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
     return () => {
       stream?.getTracks().forEach(t => t.stop());
       cancelAnimationFrame(rafRef.current);
+      cancelAnimationFrame(idleRafRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (sessionState !== 'idle' || !cameraReady || !detectorReady) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    const loop = async () => {
+      if (sessionState !== 'idle') return;
+
+      const activeGhostFrames = ghostFrames.length > 0 ? ghostFrames : GHOST_FRAMES;
+      const ghostFrame = activeGhostFrames[0];
+
+      ctx.clearRect(0, 0, W, H);
+      ctx.save();
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0, W, H);
+      ctx.restore();
+
+      const result = await detectPose(video);
+      const now = performance.now();
+
+      if (result) {
+        const patientJoints = videoToCanvasCoords(result.joints, video.videoWidth || 640, video.videoHeight || 480, W, H);
+        const ghostJoints = ghostFrame.joints;
+        const mirroredPatientJoints = mirrorJoints(patientJoints);
+        const mirroredGhostJoints = mirrorJoints(ghostJoints);
+
+        const normPatient = normalizeSkeleton(mirroredPatientJoints);
+        const normGhost = normalizeSkeleton(mirroredGhostJoints);
+        const patAngles = extractJointAngles(normPatient);
+        const refAngles = extractJointAngles(normGhost);
+        const comparison = comparePoses(patAngles, refAngles);
+
+        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, comparison.incorrect_joints);
+
+        const aligned = comparison.accuracy_score >= 82 && comparison.incorrect_joints.length <= 1;
+        if (now - alignmentUpdateRef.current > 180) {
+          alignmentUpdateRef.current = now;
+          setAlignmentScore(comparison.accuracy_score);
+          setIsAlignedToGuide(aligned);
+          if (aligned) {
+            setFeedback({ message: 'Aligned with guide skeleton. You can start now.', severity: 'good' });
+          } else {
+            const hint = getAlignmentHint(mirroredPatientJoints, mirroredGhostJoints);
+            setFeedback({ message: `Align with guide: ${hint}`, severity: 'warn' });
+          }
+        }
+      } else {
+        drawDualSkeleton(ctx, {}, mirrorJoints(ghostFrame.joints), W, H, []);
+        if (now - alignmentUpdateRef.current > 180) {
+          alignmentUpdateRef.current = now;
+          setAlignmentScore(0);
+          setIsAlignedToGuide(false);
+          setFeedback({ message: 'Step into view and align with the ghost skeleton.', severity: 'warn' });
+        }
+      }
+
+      idleRafRef.current = requestAnimationFrame(loop);
+    };
+
+    idleRafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(idleRafRef.current);
+  }, [sessionState, cameraReady, detectorReady, ghostFrames]);
+
+  useEffect(() => {
+    if (sessionState !== 'idle' || !isAlignedToGuide) {
+      setAlignCountdown(null);
+      return;
+    }
+
+    setAlignCountdown(3);
+    const interval = setInterval(() => {
+      setAlignCountdown((current) => {
+        if (current === null) return null;
+        if (current <= 1) {
+          setSessionState('active');
+          setFeedback({ message: 'Session started — follow the ghost skeleton!', severity: 'good' });
+          return null;
+        }
+        return current - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [sessionState, isAlignedToGuide]);
 
   // ── Main detection loop ───────────────────────────────────────────────────
   const runDetectionLoop = useCallback(() => {
@@ -221,7 +386,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
 
       ctx.clearRect(0, 0, W, H);
 
-      // Mirror-flip the canvas to match webcam
+      // Draw mirrored camera frame
       ctx.save();
       ctx.translate(W, 0);
       ctx.scale(-1, 1);
@@ -240,10 +405,12 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         // Scale to canvas
         const patientJoints = videoToCanvasCoords(result.joints, video.videoWidth || 640, video.videoHeight || 480, W, H);
         const ghostJoints = ghostFrame.joints;
+        const mirroredPatientJoints = mirrorJoints(patientJoints);
+        const mirroredGhostJoints = mirrorJoints(ghostJoints);
 
         // Normalize both for comparison
-        const normPatient = normalizeSkeleton(patientJoints);
-        const normGhost = normalizeSkeleton(ghostJoints);
+        const normPatient = normalizeSkeleton(mirroredPatientJoints);
+        const normGhost = normalizeSkeleton(mirroredGhostJoints);
 
         // Compute angles + compare
         const patAngles = extractJointAngles(normPatient);
@@ -255,7 +422,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
           .flatMap(j => [j.replace('elbow_', 'right_elbow').replace('wrist_', 'right_wrist')]);
 
         // Draw dual skeleton
-        drawDualSkeleton(ctx, patientJoints, ghostJoints, W, H, comparison.incorrect_joints);
+        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, comparison.incorrect_joints);
 
         // Update accuracy (rolling average)
         accuracyBufferRef.current.push(comparison.accuracy_score);
@@ -311,7 +478,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         ctx.restore();
 
         // Still draw ghost
-        drawDualSkeleton(ctx, {}, ghostFrame.joints, W, H, []);
+        drawDualSkeleton(ctx, {}, mirrorJoints(ghostFrame.joints), W, H, []);
         setFeedback({ message: 'Position yourself in front of the camera.', severity: 'warn' });
       }
 
@@ -349,6 +516,10 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   };
 
   const handleStart = () => {
+    if (!isAlignedToGuide) {
+      setFeedback({ message: 'Align to the ghost skeleton before starting.', severity: 'warn' });
+      return;
+    }
     setSessionState('active');
     setFeedback({ message: 'Session started — follow the ghost skeleton!', severity: 'good' });
   };
@@ -432,14 +603,24 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
 
             {/* Status overlay when idle */}
             {sessionState === 'idle' && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm">
-                <div className="text-teal-600 text-sm mb-4 font-mono">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
+                <div className="bg-black/70 border border-teal-300/30 rounded-xl px-4 py-3 mb-4 text-center">
+                  <div className="text-teal-300 text-2xl font-mono font-semibold leading-none mb-1">
+                    {alignmentScore}%
+                  </div>
+                  <div className="text-teal-400 text-sm font-mono">
+                    Alignment
+                  </div>
+                </div>
+                <div className="text-teal-300 text-sm mb-4 font-mono bg-black/60 border border-teal-300/20 rounded-lg px-3 py-1.5">
                   {!cameraReady ? '⏳ Requesting camera access…' :
                    !detectorReady ? '⏳ Loading MoveNet model…' :
-                   '✓ Camera ready · MoveNet loaded'}
+                   isAlignedToGuide
+                     ? `✓ Aligned (${alignmentScore}%) · Auto start in ${alignCountdown ?? 3}s`
+                     : `Align with guide (${alignmentScore}%)`}
                 </div>
                 {cameraReady && detectorReady && (
-                  <button onClick={handleStart} className="btn-primary flex items-center gap-2 text-base px-8 py-3">
+                  <button onClick={handleStart} disabled={!isAlignedToGuide} className="btn-primary flex items-center gap-2 text-base px-8 py-3 disabled:opacity-40 disabled:cursor-not-allowed">
                     <Play className="w-5 h-5" />
                     Start Session
                   </button>
@@ -451,7 +632,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
             <div className="absolute bottom-3 left-3 flex gap-4">
               {[
                 { color: '#63CAB7', label: 'Your skeleton' },
-                { color: 'rgba(99,202,183,0.4)', label: 'Guide' },
+                { color: 'rgba(167,139,250,0.7)', label: 'Guide' },
                 { color: '#ff4d4d', label: 'Correction needed' },
               ].map(({ color, label }) => (
                 <div key={label} className="flex items-center gap-1.5">
@@ -477,10 +658,10 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
           {/* Controls */}
           <div className="flex gap-3 mt-4">
             {sessionState === 'idle' ? (
-              <button onClick={handleStart} disabled={!cameraReady || !detectorReady}
+              <button onClick={handleStart} disabled={!cameraReady || !detectorReady || !isAlignedToGuide}
                 className="btn-primary flex-1 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed py-3">
                 <Play className="w-4 h-4" />
-                {!detectorReady ? 'Loading MoveNet…' : !cameraReady ? 'Waiting for camera…' : 'Start Session'}
+                {!detectorReady ? 'Loading MoveNet…' : !cameraReady ? 'Waiting for camera…' : !isAlignedToGuide ? 'Align to Start' : 'Start Session'}
               </button>
             ) : (
               <>

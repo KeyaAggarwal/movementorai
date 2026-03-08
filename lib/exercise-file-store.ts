@@ -12,6 +12,7 @@ type CreateExerciseInput = {
   steps?: any[];
   created_by?: string | null;
   videoFile?: File | null;
+  thumbnailFile?: File | null;
   motionData?: unknown;
 };
 
@@ -111,6 +112,16 @@ export async function createStoredExercise(input: CreateExerciseInput): Promise<
     videoPublicPath = toPublicPath(videoAbsolutePath);
   }
 
+  let thumbnailPublicPath = '';
+  if (input.thumbnailFile) {
+    const thumbExt = path.extname(input.thumbnailFile.name || '').toLowerCase() || '.jpg';
+    const thumbFileName = `thumbnail${thumbExt}`;
+    const thumbAbsolutePath = path.join(exerciseDir, thumbFileName);
+    const thumbBuffer = Buffer.from(await input.thumbnailFile.arrayBuffer());
+    await fs.writeFile(thumbAbsolutePath, thumbBuffer);
+    thumbnailPublicPath = toPublicPath(thumbAbsolutePath);
+  }
+
   const motionFileName = 'keypoints.json';
   const motionAbsolutePath = path.join(exerciseDir, motionFileName);
   await fs.writeFile(motionAbsolutePath, JSON.stringify(input.motionData ?? null, null, 2), 'utf-8');
@@ -128,7 +139,7 @@ export async function createStoredExercise(input: CreateExerciseInput): Promise<
     steps: normalizeList(input.steps),
     video_url: videoPublicPath,
     motion_data_url: motionPublicPath,
-    thumbnail_url: '',
+    thumbnail_url: thumbnailPublicPath,
     created_by: input.created_by ?? null,
     created_at,
   };

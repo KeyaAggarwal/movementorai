@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Play, Clock, Target, CheckCircle } from 'lucide-react';
+import { SARAH_PATIENT_ID } from '@/lib/demo-constants';
 
 type Assignment = {
   id: string;
@@ -34,8 +35,6 @@ type AssignedExerciseCard = {
   rom_last: number;
 };
 
-const DEMO_PATIENT_ID = 'p1';
-
 export default function PatientHome() {
   const [cards, setCards] = useState<AssignedExerciseCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -46,7 +45,7 @@ export default function PatientHome() {
     const loadAssignedExercises = async () => {
       try {
         const [assignmentsRes, exercisesRes] = await Promise.all([
-          fetch(`/api/assignments?patient_id=${DEMO_PATIENT_ID}`),
+          fetch(`/api/assignments?patient_id=${SARAH_PATIENT_ID}`),
           fetch('/api/exercises'),
         ]);
 

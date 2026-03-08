@@ -16,6 +16,14 @@ interface Step {
 type Phase = 'upload' | 'extracting' | 'segment' | 'details' | 'done';
 
 export default function CreateExercise() {
+  const [exerciseId, setExerciseId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    setExerciseId(params.get('exerciseId'));
+  }, []);
+
   const [phase, setPhase] = useState<Phase>('upload');
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState('');
@@ -107,6 +115,47 @@ export default function CreateExercise() {
     steps.find(s => frame >= s.start_frame && frame <= s.end_frame);
 
   const currentStep = getStepForFrame(currentFrame);
+
+  useEffect(() => {
+    if (!exerciseId) return;
+    let mounted = true;
+
+    const loadExercise = async () => {
+      try {
+        const res = await fetch(`/api/exercises?id=${exerciseId}&include_motion=1`);
+        const json = await res.json();
+        if (!mounted || !json?.data) return;
+
+        const data = json.data;
+        setVideoUrl(data.video_url || '');
+        setForm({
+          name: data.name || '',
+          body_part: data.body_part || '',
+          injury_category: data.injury_category || '',
+          focus_joints: Array.isArray(data.focus_joints) ? data.focus_joints.join(', ') : '',
+          description: data.description || '',
+        });
+
+        if (Array.isArray(data.steps) && data.steps.length > 0) {
+          setSteps(data.steps);
+        }
+
+        if (data.motion_data && Array.isArray(data.motion_data.frames)) {
+          setMotionData(data.motion_data as MediaPipeMotionData);
+          const inferredTotalFrames = Number(data.motion_data.totalFrames || data.motion_data.frames.length || 120);
+          setTotalFrames(inferredTotalFrames);
+        }
+
+        setCurrentFrame(0);
+        setPhase('segment');
+      } catch {
+        // Keep default create flow if loading fails.
+      }
+    };
+
+    loadExercise();
+    return () => { mounted = false; };
+  }, [exerciseId]);
 
   const syncFrameFromVideo = useCallback(() => {
     const video = videoRef.current;
@@ -210,6 +259,43 @@ export default function CreateExercise() {
         throw new Error('Please upload a video file before saving.');
       }
 
+      const createThumbnailFile = async (file: File): Promise<File | null> => {
+        return new Promise((resolve) => {
+          const preview = document.createElement('video');
+          preview.src = URL.createObjectURL(file);
+          preview.muted = true;
+          preview.playsInline = true;
+
+          preview.onloadeddata = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = preview.videoWidth || 640;
+            canvas.height = preview.videoHeight || 360;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+              URL.revokeObjectURL(preview.src);
+              resolve(null);
+              return;
+            }
+            ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
+            canvas.toBlob((blob) => {
+              URL.revokeObjectURL(preview.src);
+              if (!blob) {
+                resolve(null);
+                return;
+              }
+              resolve(new File([blob], 'thumbnail.jpg', { type: 'image/jpeg' }));
+            }, 'image/jpeg', 0.82);
+          };
+
+          preview.onerror = () => {
+            URL.revokeObjectURL(preview.src);
+            resolve(null);
+          };
+        });
+      };
+
+      const thumbnailFile = await createThumbnailFile(videoFile);
+
       const formData = new FormData();
       formData.append('name', form.name.trim());
       formData.append('body_part', form.body_part);
@@ -226,6 +312,9 @@ export default function CreateExercise() {
       formData.append('motion_data', JSON.stringify(motionData));
       formData.append('created_by', '');
       formData.append('video_file', videoFile);
+      if (thumbnailFile) {
+        formData.append('thumbnail_file', thumbnailFile);
+      }
 
       const res = await fetch('/api/exercises', {
         method: 'POST',

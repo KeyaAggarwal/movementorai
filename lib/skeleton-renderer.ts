@@ -11,6 +11,8 @@ export interface SkeletonDrawOptions {
   highlightJoints?: string[];
   highlightColor?: string;
   minConfidence?: number;
+  glowColor?: string;
+  glowBlur?: number;
 }
 
 const DEFAULTS: Required<SkeletonDrawOptions> = {
@@ -21,6 +23,8 @@ const DEFAULTS: Required<SkeletonDrawOptions> = {
   highlightJoints: [],
   highlightColor: '#ff4d4d',
   minConfidence: 0.3,
+  glowColor: 'transparent',
+  glowBlur: 14,
 };
 
 /**
@@ -57,6 +61,9 @@ export function drawSkeleton(
     if (isHighlighted) {
       ctx.shadowColor = color;
       ctx.shadowBlur = 8;
+    } else if (opts.glowBlur > 0) {
+      ctx.shadowColor = opts.glowColor;
+      ctx.shadowBlur = opts.glowBlur;
     } else {
       ctx.shadowBlur = 0;
     }
@@ -75,8 +82,16 @@ export function drawSkeleton(
 
     ctx.beginPath();
     ctx.fillStyle = color;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = isHighlighted ? 10 : 4;
+    if (isHighlighted) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
+    } else if (opts.glowBlur > 0) {
+      ctx.shadowColor = opts.glowColor;
+      ctx.shadowBlur = Math.max(4, opts.glowBlur * 0.8);
+    } else {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 4;
+    }
 
     ctx.arc(kp.x * canvasWidth, kp.y * canvasHeight, opts.dotRadius, 0, Math.PI * 2);
     ctx.fill();
@@ -96,12 +111,24 @@ export function drawDualSkeleton(
   canvasHeight: number,
   incorrectJoints: string[] = []
 ): void {
-  // Ghost skeleton first (behind)
   drawSkeleton(ctx, ghostJoints, canvasWidth, canvasHeight, {
-    color: 'rgba(99, 202, 183, 0.35)',
-    lineWidth: 1.5,
+    color: 'rgba(196, 181, 253, 0.45)',
+    lineWidth: 40,
+    dotRadius: 8,
+    alpha: 0.45,
+    glowColor: 'rgba(196, 181, 253, 0.45)',
+    glowBlur: 0,
+    highlightJoints: [],
+  });
+
+  // Ghost skeleton main stroke
+  drawSkeleton(ctx, ghostJoints, canvasWidth, canvasHeight, {
+    color: 'rgba(167, 139, 250, 0.9)',
+    lineWidth: 2.4,
     dotRadius: 3,
-    alpha: 0.6,
+    alpha: 0.92,
+    glowColor: 'rgba(196, 181, 253, 0.8)',
+    glowBlur: 16,
     highlightJoints: [],
   });
 

@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     };
 
     const videoFile = formData.get('video_file');
+    const thumbnailFile = formData.get('thumbnail_file');
     const stored = await createStoredExercise({
       name,
       category_id: (formData.get('category_id') as string) || null,
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
       created_by: (formData.get('created_by') as string) || null,
       motionData: parseJson(formData.get('motion_data')),
       videoFile: videoFile instanceof File ? videoFile : null,
+      thumbnailFile: thumbnailFile instanceof File ? thumbnailFile : null,
     });
 
     return NextResponse.json({ data: stored, error: null }, { status: 201 });
@@ -74,6 +76,7 @@ export async function POST(req: NextRequest) {
     motionData: motion_data,
     created_by,
     videoFile: null,
+    thumbnailFile: null,
   });
 
   return NextResponse.json({ data: stored, error: null }, { status: 201 });

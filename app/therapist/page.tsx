@@ -15,6 +15,7 @@ type Exercise = {
   focus_joints: string[];
   video_url: string;
   motion_data_url: string;
+  thumbnail_url?: string;
   steps: ExerciseStep[];
   created_by: string | null;
   created_at: string;
@@ -30,11 +31,29 @@ const CATEGORIES = [
 function ExerciseCard({ exercise }: { exercise: Exercise }) {
   return (
     <div className="card group hover:border-teal-300/25 transition-all duration-300">
-      {/* Thumbnail placeholder */}
+      {/* Video thumbnail */}
       <div className="w-full h-32 rounded-xl bg-teal-300/5 border border-teal-300/10 flex items-center justify-center mb-4 relative overflow-hidden">
-        <div className="text-teal-800 text-xs font-mono uppercase tracking-wider">
-          {exercise.body_part} · {exercise.focus_joints.join(' · ')}
-        </div>
+        {exercise.thumbnail_url ? (
+          <img
+            src={exercise.thumbnail_url}
+            alt={`${exercise.name} thumbnail`}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : exercise.video_url ? (
+          <video
+            src={exercise.video_url}
+            className="absolute inset-0 w-full h-full object-cover"
+            muted
+            playsInline
+            autoPlay
+            loop
+            preload="metadata"
+          />
+        ) : (
+          <div className="text-teal-800 text-xs font-mono uppercase tracking-wider">
+            {exercise.body_part} · {exercise.focus_joints.join(' · ')}
+          </div>
+        )}
         <div className="absolute inset-0 bg-grid opacity-50" />
       </div>
 
@@ -64,7 +83,7 @@ function ExerciseCard({ exercise }: { exercise: Exercise }) {
           Assign
         </Link>
         <Link
-          href={`/patient/exercise/${exercise.id}`}
+          href={`/therapist/create?exerciseId=${exercise.id}`}
           className="flex-1 btn-primary text-center text-xs flex items-center justify-center gap-1.5"
         >
           <Play className="w-3 h-3" />
