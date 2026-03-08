@@ -226,6 +226,87 @@ function getAlignmentHint(
   return `Try to ${hints.join(' and ')}.`;
 }
 
+function getBodyCenterAndScale(joints: Record<string, Keypoint>) {
+  const ls = joints.left_shoulder;
+  const rs = joints.right_shoulder;
+  const lh = joints.left_hip;
+  const rh = joints.right_hip;
+
+  if (!ls || !rs || !lh || !rh) {
+    return null;
+  }
+
+  const centerX = (ls.x + rs.x + lh.x + rh.x) / 4;
+  const centerY = (ls.y + rs.y + lh.y + rh.y) / 4;
+  const shoulderWidth = Math.hypot(ls.x - rs.x, ls.y - rs.y);
+  const hipWidth = Math.hypot(lh.x - rh.x, lh.y - rh.y);
+  const scale = (shoulderWidth + hipWidth) / 2;
+
+  return { centerX, centerY, scale };
+}
+
+function computeAlignmentScore(
+  patientJoints: Record<string, Keypoint>,
+  ghostJoints: Record<string, Keypoint>,
+  angleScore: number
+) {
+  const patientBody = getBodyCenterAndScale(patientJoints);
+  const ghostBody = getBodyCenterAndScale(ghostJoints);
+
+  if (!patientBody || !ghostBody || ghostBody.scale <= 1e-6) {
+    return {
+      score: Math.max(0, Math.min(100, Math.round(angleScore * 0.85))),
+      isAligned: false,
+    };
+  }
+
+  const centerDist = Math.hypot(patientBody.centerX - ghostBody.centerX, patientBody.centerY - ghostBody.centerY);
+  const scaleRatio = patientBody.scale / ghostBody.scale;
+  const scaleDelta = Math.abs(scaleRatio - 1);
+
+  const centerScore = Math.max(0, Math.min(100, Math.round(100 - (centerDist / 0.40) * 100)));
+  const scaleScore = Math.max(0, Math.min(100, Math.round(100 - (scaleDelta / 0.50) * 100)));
+  const score = Math.max(0, Math.min(100, Math.round(angleScore * 0.85 + centerScore * 0.1 + scaleScore * 0.05)));
+
+  const centeredEnough = centerDist <= 0.14;
+  const scaledEnough = scaleRatio >= 0.68 && scaleRatio <= 1.45;
+
+  return {
+    score,
+    isAligned: centeredEnough && scaledEnough,
+  };
+}
+
+function getAlignmentReferenceFrame(
+  frames: PoseFrame[],
+  steps: { id: number; start_frame?: number; end_frame?: number }[]
+): PoseFrame {
+  if (frames.length === 0) return GHOST_FRAMES[0];
+
+  let maxFrame = 0;
+  for (const frame of frames) {
+    const value = Number(frame.frame);
+    if (Number.isFinite(value) && value > maxFrame) maxFrame = value;
+  }
+
+  const ranges = getStepRanges(steps, Math.max(1, maxFrame + 1));
+  const firstStepStart = ranges[0]?.start ?? 0;
+
+  let closest = frames[0];
+  let smallestDistance = Math.abs(Number(frames[0].frame) - firstStepStart);
+
+  for (let index = 1; index < frames.length; index += 1) {
+    const candidate = frames[index];
+    const distance = Math.abs(Number(candidate.frame) - firstStepStart);
+    if (distance < smallestDistance) {
+      smallestDistance = distance;
+      closest = candidate;
+    }
+  }
+
+  return closest;
+}
+
 // ─── Accuracy Ring SVG ───────────────────────────────────────────────────────
 function AccuracyRing({ score }: { score: number }) {
   const r = 32, circ = 2 * Math.PI * r;
@@ -267,6 +348,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const pendingStepStartFrameRef = useRef<number | null>(null);
   const pendingStepIdRef = useRef<number | null>(null);
   const accuracyBufferRef = useRef<number[]>([]);
+  const alignmentBufferRef = useRef<number[]>([]);
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -494,7 +576,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
       if (sessionState !== 'idle') return;
 
       const activeGhostFrames = ghostFrames.length > 0 ? ghostFrames : GHOST_FRAMES;
-      const ghostFrame = activeGhostFrames[0];
+      const ghostFrame = getAlignmentReferenceFrame(activeGhostFrames, exercise.steps);
 
       ctx.clearRect(0, 0, W, H);
       ctx.save();
@@ -517,13 +599,20 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         const patAngles = extractJointAngles(normPatient);
         const refAngles = extractJointAngles(normGhost);
         const comparison = comparePoses(patAngles, refAngles);
+        const alignment = computeAlignmentScore(mirroredPatientJoints, mirroredGhostJoints, comparison.accuracy_score);
 
         drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, comparison.incorrect_joints);
 
-        const aligned = comparison.accuracy_score >= 82 && comparison.incorrect_joints.length <= 1;
+        alignmentBufferRef.current.push(alignment.score);
+        if (alignmentBufferRef.current.length > 12) alignmentBufferRef.current.shift();
+        const smoothedAlignment = Math.round(
+          alignmentBufferRef.current.reduce((sum, value) => sum + value, 0) / alignmentBufferRef.current.length
+        );
+
+        const aligned = smoothedAlignment >= 76 && comparison.incorrect_joints.length <= 2 && alignment.isAligned;
         if (now - alignmentUpdateRef.current > 180) {
           alignmentUpdateRef.current = now;
-          setAlignmentScore(comparison.accuracy_score);
+          setAlignmentScore(smoothedAlignment);
           setIsAlignedToGuide(aligned);
           if (aligned) {
             setFeedback({ message: 'Aligned with guide skeleton. You can start now.', severity: 'good' });
@@ -547,7 +636,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
 
     idleRafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(idleRafRef.current);
-  }, [sessionState, cameraReady, detectorReady, ghostFrames]);
+  }, [sessionState, cameraReady, detectorReady, ghostFrames, exercise.steps]);
 
   useEffect(() => {
     if (sessionState !== 'idle' || !isAlignedToGuide) {

@@ -84,5 +84,80 @@
     "thumbnail_url": "",
     "created_by": null,
     "created_at": "2026-03-08T01:59:46.725Z"
+  },
+  {
+    "id": "9a33e6w4pbrmmhajvep",
+    "name": "elbow extension",
+    "category_id": null,
+    "category_name": null,
+    "description": "idk",
+    "body_part": "Arm",
+    "injury_category": "elbow injury",
+    "focus_joints": [
+      "elbow",
+      "wrist"
+    ],
+    "steps": [
+      {
+        "id": 1,
+        "label": "Start Position",
+        "start_frame": 0,
+        "end_frame": 15
+      },
+      {
+        "id": 2,
+        "label": "move to 90",
+        "start_frame": 15,
+        "end_frame": 78
+      },
+      {
+        "id": 3,
+        "label": "Return to Neutral",
+        "start_frame": 79,
+        "end_frame": 159
+      }
+    ],
+    "video_url": "/local-exercises/9a33e6w4pbrmmhajvep/video.mov",
+    "motion_data_url": "/local-exercises/9a33e6w4pbrmmhajvep/keypoints.json",
+    "thumbnail_url": "/local-exercises/9a33e6w4pbrmmhajvep/thumbnail.jpg",
+    "created_by": null,
+    "created_at": "2026-03-08T05:07:49.825Z"
+  },
+  {
+    "id": "ucoo37sethmmhaojzl",
+    "name": "sa",
+    "category_id": null,
+    "category_name": null,
+    "description": "f",
+    "body_part": "",
+    "injury_category": "b",
+    "focus_joints": [
+      "fq"
+    ],
+    "steps": [
+      {
+        "id": 1,
+        "label": "Start Position",
+        "start_frame": 0,
+        "end_frame": 85
+      },
+      {
+        "id": 2,
+        "label": "Main Movement",
+        "start_frame": 86,
+        "end_frame": 170
+      },
+      {
+        "id": 3,
+        "label": "Return to Neutral",
+        "start_frame": 171,
+        "end_frame": 257
+      }
+    ],
+    "video_url": "/local-exercises/ucoo37sethmmhaojzl/video.mov",
+    "motion_data_url": "/local-exercises/ucoo37sethmmhaojzl/keypoints.json",
+    "thumbnail_url": "/local-exercises/ucoo37sethmmhaojzl/thumbnail.jpg",
+    "created_by": null,
+    "created_at": "2026-03-08T05:11:28.305Z"
   }
 ]
