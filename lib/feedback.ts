@@ -1,6 +1,6 @@
 /**
  * Generates natural, encouraging feedback messages from raw motion error data.
- * Calls the Anthropic API server-side via /api/feedback.
+ * Calls the Gemini-backed API server-side via /api/feedback.
  */
 
 export interface FeedbackInput {
@@ -36,7 +36,7 @@ function ruleBased(input: FeedbackInput): FeedbackResult {
 
   if (incorrectJoints.length === 0) {
     return {
-      message: `Great form! Keep going with ${currentStep}.`,
+      message: `Great form on ${currentStep}—stay steady and keep that same control.`,
       severity: 'good',
     };
   }
@@ -44,12 +44,12 @@ function ruleBased(input: FeedbackInput): FeedbackResult {
   const jointLabel = incorrectJoints[0].replace('_', ' ');
   if (avgError > 20) {
     return {
-      message: `Adjust your ${jointLabel} — try to match the guide skeleton more closely.`,
+      message: `Lift your ${jointLabel} slightly and move slower—you’re close, keep going.`,
       severity: 'error',
     };
   }
   return {
-    message: `Almost there — slight adjustment needed at your ${jointLabel}.`,
+    message: `Nice effort—fine-tune your ${jointLabel} and hold the position through the rep.`,
     severity: 'warn',
   };
 }

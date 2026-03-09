@@ -1,12 +1,5 @@
 import Link from 'next/link';
-import { Activity, Users, BarChart3, Zap } from 'lucide-react';
-
-const features = [
-  { icon: Zap, title: 'Real-Time Pose Detection', desc: 'MoveNet via TensorFlow.js runs entirely in-browser — no server round-trips.' },
-  { icon: Activity, title: 'Ghost Skeleton Guidance', desc: 'Therapist reference skeleton overlaid on patient\'s live camera feed with deviation highlighting.' },
-  { icon: BarChart3, title: 'Recovery Analytics', desc: 'ROM trend charts, accuracy scores, and compliance tracking per patient over time.' },
-  { icon: Users, title: 'Therapist–Patient Loop', desc: 'Full assignment system: create exercises, assign to patients, monitor progress.' },
-];
+import { Activity, Users } from 'lucide-react';
 
 export default function Home() {
   return (
@@ -24,7 +17,7 @@ export default function Home() {
           </div>
 
           <h1 className="font-display text-6xl font-semibold text-teal-50 mb-6 leading-tight">
-            PhysioAI
+            MoveMentor
           </h1>
           <p className="text-teal-500 text-lg max-w-xl mx-auto leading-relaxed">
             Real-time pose-guided rehabilitation. Ghost skeleton overlay. Automatic rep counting and ROM tracking.
@@ -58,21 +51,6 @@ export default function Home() {
               ENTER PORTAL →
             </div>
           </Link>
-        </div>
-
-        {/* Features */}
-        <div className="grid grid-cols-2 gap-4 max-w-3xl mx-auto">
-          {features.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="card-sm flex gap-4">
-              <div className="w-8 h-8 rounded-lg bg-teal-300/10 flex items-center justify-center flex-shrink-0">
-                <Icon className="w-4 h-4 text-teal-300" />
-              </div>
-              <div>
-                <div className="text-teal-100 text-sm font-medium mb-1">{title}</div>
-                <div className="text-teal-600 text-xs leading-relaxed">{desc}</div>
-              </div>
-            </div>
-          ))}
         </div>
 
         {/* Tech stack footer */}

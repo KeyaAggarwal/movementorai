@@ -1,5 +1,18 @@
 import type { Keypoint, JointAngles, PoseComparison, PoseFrame } from '@/types';
 
+const POSECOMPARE_ANGLE_MAP: Record<string, [string, string, string]> = {
+  right_shoulder: ['left_shoulder', 'right_shoulder', 'right_elbow'],
+  right_arm: ['right_shoulder', 'right_elbow', 'right_wrist'],
+  left_shoulder: ['left_elbow', 'left_shoulder', 'right_shoulder'],
+  left_arm: ['left_wrist', 'left_elbow', 'left_shoulder'],
+  right_hip: ['left_hip', 'right_hip', 'right_knee'],
+  right_leg: ['right_hip', 'right_knee', 'right_ankle'],
+  left_hip: ['left_knee', 'left_hip', 'right_hip'],
+  left_leg: ['left_hip', 'left_knee', 'left_ankle'],
+};
+
+const POSECOMPARE_ERROR_THRESHOLD = 20;
+
 // ─── Vector Math ──────────────────────────────────────────────────────────────
 
 function dot(a: [number, number], b: [number, number]): number {
@@ -140,6 +153,59 @@ export function comparePoses(
   const accuracy_score = Math.max(0, Math.round(100 - avg_error));
 
   return { joint_errors, avg_error, accuracy_score, incorrect_joints };
+}
+
+export function comparePosesPoseCompare(
+  patientJoints: Record<string, Keypoint>,
+  referenceJoints: Record<string, Keypoint>
+): PoseComparison {
+  const joint_errors: Record<string, number> = {};
+  const incorrect_joints: string[] = [];
+  let totalError = 0;
+  let count = 0;
+
+  for (const [jointName, triplet] of Object.entries(POSECOMPARE_ANGLE_MAP)) {
+    const [aName, bName, cName] = triplet;
+    const pa = patientJoints[aName];
+    const pb = patientJoints[bName];
+    const pc = patientJoints[cName];
+    const ra = referenceJoints[aName];
+    const rb = referenceJoints[bName];
+    const rc = referenceJoints[cName];
+
+    if (!pa || !pb || !pc || !ra || !rb || !rc) continue;
+
+    const patientAngle = jointAngle(pa, pb, pc);
+    const referenceAngle = jointAngle(ra, rb, rc);
+    const error = Math.abs(referenceAngle - patientAngle);
+
+    joint_errors[jointName] = Math.round(error);
+    totalError += error;
+    count += 1;
+
+    if (error > POSECOMPARE_ERROR_THRESHOLD) {
+      incorrect_joints.push(jointName);
+    }
+  }
+
+  if (count === 0) {
+    return {
+      joint_errors,
+      avg_error: 180,
+      accuracy_score: 0,
+      incorrect_joints,
+    };
+  }
+
+  const avg_error = totalError / count;
+  const accuracy_score = Math.max(0, Math.min(100, Math.round(100 - avg_error * 2.5)));
+
+  return {
+    joint_errors,
+    avg_error,
+    accuracy_score,
+    incorrect_joints,
+  };
 }
 
 // ─── Step Recognition ─────────────────────────────────────────────────────────

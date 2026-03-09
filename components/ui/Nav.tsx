@@ -20,9 +20,9 @@ export function Nav({ role, tabs }: NavProps) {
         <Link href="/" className="flex items-center gap-2 mr-4 group">
           <ChevronLeft className="w-3.5 h-3.5 text-teal-600 group-hover:text-teal-400 transition-colors" />
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-teal-600 to-teal-300 flex items-center justify-center text-teal-950 font-bold text-xs">
-            P
+            M
           </div>
-          <span className="text-sm font-medium text-teal-200">PhysioAI</span>
+          <span className="text-sm font-medium text-teal-200">MoveMentor</span>
         </Link>
 
         {/* Role badge */}

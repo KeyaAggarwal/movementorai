@@ -4,14 +4,15 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { Play, Pause, Square, Volume2, VolumeX, CheckCircle, AlertTriangle } from 'lucide-react';
 import { initDetector, detectPose } from '@/lib/pose-detector';
 import { drawDualSkeleton, videoToCanvasCoords } from '@/lib/skeleton-renderer';
-import { normalizeSkeleton, extractJointAngles, comparePoses, RepStateMachine, createROMTracker } from '@/lib/pose-math';
+import { normalizeSkeleton, extractJointAngles, comparePosesPoseCompare, RepStateMachine, createROMTracker } from '@/lib/pose-math';
 import { formatDuration } from '@/lib/utils';
-import type { Keypoint, PoseFrame } from '@/types';
+import type { Keypoint, PoseComparison, PoseFrame } from '@/types';
 
 // ─── Mock exercise data (production: fetched from Supabase) ──────────────────
 const EXERCISE = {
   id: '1',
   name: 'Wrist Rotation Rehab',
+  body_part: 'Arm',
   focus_joints: ['right_elbow', 'right_wrist'],
   sets_per_day: 3,
   reps_per_set: 10,
@@ -58,6 +59,7 @@ const GHOST_FRAMES = generateGhostFrames();
 type ExerciseData = {
   id: string;
   name: string;
+  body_part?: string;
   focus_joints: string[];
   sets_per_day: number;
   reps_per_set: number;
@@ -307,6 +309,126 @@ function getAlignmentReferenceFrame(
   return closest;
 }
 
+function mapIncorrectLabelsToKeypoints(labels: string[]): string[] {
+  const mapped = new Set<string>();
+
+  for (const label of labels) {
+    switch (label) {
+      case 'right_arm':
+        mapped.add('right_shoulder');
+        mapped.add('right_elbow');
+        mapped.add('right_wrist');
+        break;
+      case 'left_arm':
+        mapped.add('left_shoulder');
+        mapped.add('left_elbow');
+        mapped.add('left_wrist');
+        break;
+      case 'right_shoulder':
+        mapped.add('right_shoulder');
+        mapped.add('right_elbow');
+        break;
+      case 'left_shoulder':
+        mapped.add('left_shoulder');
+        mapped.add('left_elbow');
+        break;
+      case 'right_hip':
+        mapped.add('right_hip');
+        mapped.add('right_knee');
+        break;
+      case 'left_hip':
+        mapped.add('left_hip');
+        mapped.add('left_knee');
+        break;
+      case 'right_leg':
+        mapped.add('right_hip');
+        mapped.add('right_knee');
+        mapped.add('right_ankle');
+        break;
+      case 'left_leg':
+        mapped.add('left_hip');
+        mapped.add('left_knee');
+        mapped.add('left_ankle');
+        break;
+      default:
+        mapped.add(label);
+        break;
+    }
+  }
+
+  return Array.from(mapped);
+}
+
+function deriveRelevantPoseCompareLabels(bodyPart?: string, focusJoints: string[] = []): string[] {
+  const normalizedBody = (bodyPart || '').toLowerCase();
+  const normalizedFocus = focusJoints.map((item) => item.toLowerCase());
+
+  const hasRight = normalizedFocus.some((item) => item.startsWith('right_'));
+  const hasLeft = normalizedFocus.some((item) => item.startsWith('left_'));
+
+  if (normalizedBody.includes('arm') || normalizedBody.includes('shoulder') || normalizedBody.includes('elbow') || normalizedBody.includes('wrist')) {
+    if (hasRight && !hasLeft) return ['right_shoulder', 'right_arm'];
+    if (hasLeft && !hasRight) return ['left_shoulder', 'left_arm'];
+    return ['right_shoulder', 'right_arm', 'left_shoulder', 'left_arm'];
+  }
+
+  if (normalizedBody.includes('leg') || normalizedBody.includes('knee') || normalizedBody.includes('ankle') || normalizedBody.includes('hip')) {
+    if (hasRight && !hasLeft) return ['right_hip', 'right_leg'];
+    if (hasLeft && !hasRight) return ['left_hip', 'left_leg'];
+    return ['right_hip', 'right_leg', 'left_hip', 'left_leg'];
+  }
+
+  if (normalizedBody.includes('back') || normalizedBody.includes('core') || normalizedBody.includes('spine')) {
+    return ['right_shoulder', 'left_shoulder', 'right_hip', 'left_hip'];
+  }
+
+  if (hasRight && !hasLeft) {
+    return ['right_shoulder', 'right_arm', 'right_hip', 'right_leg'];
+  }
+  if (hasLeft && !hasRight) {
+    return ['left_shoulder', 'left_arm', 'left_hip', 'left_leg'];
+  }
+
+  return ['right_shoulder', 'right_arm', 'left_shoulder', 'left_arm', 'right_hip', 'right_leg', 'left_hip', 'left_leg'];
+}
+
+function filterPoseComparisonByLabels(comparison: PoseComparison, allowedLabels: string[]): PoseComparison {
+  if (!allowedLabels.length) return comparison;
+
+  const allowed = new Set(allowedLabels);
+  const filteredJointErrors: Record<string, number> = {};
+  let totalError = 0;
+  let count = 0;
+
+  for (const [joint, error] of Object.entries(comparison.joint_errors)) {
+    if (!allowed.has(joint)) continue;
+    filteredJointErrors[joint] = error;
+    totalError += error;
+    count += 1;
+  }
+
+  const filteredIncorrect = comparison.incorrect_joints.filter((joint) => allowed.has(joint));
+
+  if (count === 0) {
+    return {
+      joint_errors: {},
+      avg_error: 180,
+      accuracy_score: 0,
+      incorrect_joints: filteredIncorrect,
+    };
+  }
+
+  const avgError = totalError / count;
+  const accuracy = Math.max(0, Math.min(100, Math.round(100 - avgError * 2.5)));
+
+  return {
+    joint_errors: filteredJointErrors,
+    avg_error: avgError,
+    accuracy_score: accuracy,
+    incorrect_joints: filteredIncorrect,
+  };
+}
+
 // ─── Accuracy Ring SVG ───────────────────────────────────────────────────────
 function AccuracyRing({ score }: { score: number }) {
   const r = 32, circ = 2 * Math.PI * r;
@@ -349,6 +471,9 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const pendingStepIdRef = useRef<number | null>(null);
   const accuracyBufferRef = useRef<number[]>([]);
   const alignmentBufferRef = useRef<number[]>([]);
+  const lastSpokenFeedbackRef = useRef<string>('');
+  const lastSpokenAtRef = useRef<number>(0);
+  const preferredVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   const [detectorReady, setDetectorReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -374,6 +499,41 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   const [ghostFrames, setGhostFrames] = useState<PoseFrame[]>(GHOST_FRAMES);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
+  const speakCoachingFeedback = useCallback((message: string) => {
+    if (typeof window === 'undefined') return;
+    if (muted) return;
+    if (!window.speechSynthesis) return;
+
+    const blockedPattern = /say\s*"?start"?|press\s+start\s+next\s+step|align|session\s+started|step\s+into\s+view|position\s+yourself/i;
+    if (blockedPattern.test(message)) return;
+
+    const now = Date.now();
+    if (message === lastSpokenFeedbackRef.current && now - lastSpokenAtRef.current < 3000) return;
+    if (now - lastSpokenAtRef.current < 2000) return;
+
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.lang = 'en-US';
+    if (preferredVoiceRef.current) {
+      utterance.voice = preferredVoiceRef.current;
+    }
+    utterance.rate = 1;
+    utterance.pitch = 1;
+    utterance.volume = 0.95;
+
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+
+    lastSpokenFeedbackRef.current = message;
+    lastSpokenAtRef.current = now;
+  }, [muted]);
+
+  const setCoachingFeedback = useCallback((message: string, severity: 'good' | 'warn' | 'error') => {
+    setFeedback({ message, severity });
+    if (sessionStateRef.current === 'active' && !awaitingNextStepStartRef.current) {
+      speakCoachingFeedback(message);
+    }
+  }, [speakCoachingFeedback]);
+
   const resumeAfterStepPause = useCallback(() => {
     if (pendingStepIdRef.current !== null) {
       setCurrentStep(pendingStepIdRef.current);
@@ -393,6 +553,35 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   useEffect(() => {
     sessionStateRef.current = sessionState;
   }, [sessionState]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    const selectUsVoice = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (!voices || voices.length === 0) return;
+
+      const exactUs = voices.find((voice) => voice.lang.toLowerCase() === 'en-us');
+      const startsWithUs = voices.find((voice) => voice.lang.toLowerCase().startsWith('en-us'));
+      const englishFallback = voices.find((voice) => voice.lang.toLowerCase().startsWith('en-'));
+      preferredVoiceRef.current = exactUs ?? startsWithUs ?? englishFallback ?? voices[0];
+    };
+
+    selectUsVoice();
+    window.speechSynthesis.onvoiceschanged = selectUsVoice;
+
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (typeof window !== 'undefined' && window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     currentStepRef.current = currentStep;
@@ -500,6 +689,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         setExercise({
           id: data.id,
           name: data.name,
+          body_part: data.body_part || '',
           focus_joints: Array.isArray(data.focus_joints) ? data.focus_joints : [],
           sets_per_day: 3,
           reps_per_set: 10,
@@ -527,32 +717,69 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
   // ── Init detector + camera ────────────────────────────────────────────────
   useEffect(() => {
     let stream: MediaStream | null = null;
+    let cancelled = false;
 
     async function init() {
-      try {
-        await initDetector();
-        setDetectorReady(true);
-      } catch (e) {
-        console.error('MoveNet init failed:', e);
-      }
-
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 640, height: 480, facingMode: 'user' },
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-          setCameraReady(true);
+      const detectorTask = (async () => {
+        try {
+          await initDetector();
+          if (!cancelled) setDetectorReady(true);
+        } catch (e) {
+          console.error('MoveNet init failed:', e);
         }
-      } catch (e) {
-        console.error('Camera access failed:', e);
-      }
+      })();
+
+      const cameraTask = (async () => {
+        try {
+          if (!navigator?.mediaDevices?.getUserMedia) {
+            throw new Error('Camera API unavailable in this browser/context');
+          }
+
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 640, height: 480, facingMode: 'user' },
+          });
+          if (cancelled) return;
+
+          if (videoRef.current) {
+            const video = videoRef.current;
+            video.srcObject = stream;
+
+            await new Promise<void>((resolve) => {
+              if (video.readyState >= 1) {
+                resolve();
+                return;
+              }
+              const onLoaded = () => {
+                video.removeEventListener('loadedmetadata', onLoaded);
+                resolve();
+              };
+              video.addEventListener('loadedmetadata', onLoaded, { once: true });
+            });
+
+            try {
+              await video.play();
+            } catch {
+              // Some browsers may block autoplay, but stream can still be used for detection.
+            }
+
+            if (!cancelled) setCameraReady(true);
+          }
+        } catch (e) {
+          console.error('Camera access failed:', e);
+          if (!cancelled) {
+            setCameraReady(false);
+            setFeedback({ message: 'Camera access failed. Allow camera permission and reload.', severity: 'error' });
+          }
+        }
+      })();
+
+      await Promise.all([detectorTask, cameraTask]);
     }
 
     init();
 
     return () => {
+      cancelled = true;
       stream?.getTracks().forEach(t => t.stop());
       cancelAnimationFrame(rafRef.current);
       cancelAnimationFrame(idleRafRef.current);
@@ -597,11 +824,13 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         const normPatient = normalizeSkeleton(mirroredPatientJoints);
         const normGhost = normalizeSkeleton(mirroredGhostJoints);
         const patAngles = extractJointAngles(normPatient);
-        const refAngles = extractJointAngles(normGhost);
-        const comparison = comparePoses(patAngles, refAngles);
+        const relevantLabels = deriveRelevantPoseCompareLabels(exercise.body_part, exercise.focus_joints);
+        const rawComparison = comparePosesPoseCompare(normPatient, normGhost);
+        const comparison = filterPoseComparisonByLabels(rawComparison, relevantLabels);
         const alignment = computeAlignmentScore(mirroredPatientJoints, mirroredGhostJoints, comparison.accuracy_score);
+        const highlightJoints = mapIncorrectLabelsToKeypoints(comparison.incorrect_joints);
 
-        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, comparison.incorrect_joints);
+        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, highlightJoints);
 
         alignmentBufferRef.current.push(alignment.score);
         if (alignmentBufferRef.current.length > 12) alignmentBufferRef.current.shift();
@@ -636,7 +865,7 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
 
     idleRafRef.current = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(idleRafRef.current);
-  }, [sessionState, cameraReady, detectorReady, ghostFrames, exercise.steps]);
+  }, [sessionState, cameraReady, detectorReady, ghostFrames, exercise.steps, exercise.body_part, exercise.focus_joints]);
 
   useEffect(() => {
     if (sessionState !== 'idle' || !isAlignedToGuide) {
@@ -758,15 +987,13 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
 
         // Compute angles + compare
         const patAngles = extractJointAngles(normPatient);
-        const refAngles = extractJointAngles(normGhost);
-        const comparison = comparePoses(patAngles, refAngles);
-
-        // Map incorrect joint names back to skeleton parts for highlighting
-        const highlightJoints = comparison.incorrect_joints
-          .flatMap(j => [j.replace('elbow_', 'right_elbow').replace('wrist_', 'right_wrist')]);
+        const relevantLabels = deriveRelevantPoseCompareLabels(exercise.body_part, exercise.focus_joints);
+        const rawComparison = comparePosesPoseCompare(normPatient, normGhost);
+        const comparison = filterPoseComparisonByLabels(rawComparison, relevantLabels);
+        const highlightJoints = mapIncorrectLabelsToKeypoints(comparison.incorrect_joints);
 
         // Draw dual skeleton
-        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, comparison.incorrect_joints);
+        drawDualSkeleton(ctx, mirroredPatientJoints, mirroredGhostJoints, W, H, highlightJoints);
 
         // Update accuracy (rolling average)
         accuracyBufferRef.current.push(comparison.accuracy_score);
@@ -794,15 +1021,14 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
         // Feedback
         if (!waitingForStepStart) {
           if (comparison.incorrect_joints.length === 0) {
-            setFeedback({ message: 'Great form! Keep it up.', severity: 'good' });
+            setCoachingFeedback('Great form! Keep it up.', 'good');
           } else {
             const j = comparison.incorrect_joints[0].replace('_', ' ');
-            setFeedback({
-              message: avgScore < 70
-                ? `Adjust your ${j} — try to match the guide skeleton.`
-                : `Almost there — slight correction needed at ${j}.`,
-              severity: avgScore < 70 ? 'error' : 'warn',
-            });
+            const message = avgScore < 70
+              ? `Adjust your ${j} — try to match the guide skeleton.`
+              : `Almost there — slight correction needed at ${j}.`;
+            const severity: 'error' | 'warn' = avgScore < 70 ? 'error' : 'warn';
+            setCoachingFeedback(message, severity);
           }
         }
       } else {
@@ -826,9 +1052,12 @@ export default function LiveExercise({ params }: { params: { id: string } }) {
     sessionState,
     ghostFrames,
     exercise.steps,
+    exercise.body_part,
+    exercise.focus_joints,
     exercise.reps_per_set,
     playbackSpeed,
     speechEnabled,
+    setCoachingFeedback,
   ]);
 
   useEffect(() => {

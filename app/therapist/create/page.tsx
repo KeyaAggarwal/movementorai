@@ -262,33 +262,64 @@ export default function CreateExercise() {
       const createThumbnailFile = async (file: File): Promise<File | null> => {
         return new Promise((resolve) => {
           const preview = document.createElement('video');
-          preview.src = URL.createObjectURL(file);
+          const objectUrl = URL.createObjectURL(file);
+          preview.src = objectUrl;
           preview.muted = true;
           preview.playsInline = true;
+          preview.preload = 'metadata';
 
-          preview.onloadeddata = () => {
+          const cleanup = () => {
+            URL.revokeObjectURL(objectUrl);
+            preview.src = '';
+          };
+
+          const finalizeFromCurrentFrame = () => {
             const canvas = document.createElement('canvas');
             canvas.width = preview.videoWidth || 640;
             canvas.height = preview.videoHeight || 360;
             const ctx = canvas.getContext('2d');
             if (!ctx) {
-              URL.revokeObjectURL(preview.src);
+              cleanup();
               resolve(null);
               return;
             }
+
             ctx.drawImage(preview, 0, 0, canvas.width, canvas.height);
             canvas.toBlob((blob) => {
-              URL.revokeObjectURL(preview.src);
+              cleanup();
               if (!blob) {
                 resolve(null);
                 return;
               }
               resolve(new File([blob], 'thumbnail.jpg', { type: 'image/jpeg' }));
-            }, 'image/jpeg', 0.82);
+            }, 'image/jpeg', 0.9);
+          };
+
+          preview.onloadedmetadata = () => {
+            const duration = Number.isFinite(preview.duration) ? preview.duration : 0;
+            const targetTime = duration > 0.2 ? Math.min(duration * 0.2, duration - 0.1) : 0;
+
+            const onSeeked = () => {
+              preview.removeEventListener('seeked', onSeeked);
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  finalizeFromCurrentFrame();
+                });
+              });
+            };
+
+            preview.addEventListener('seeked', onSeeked, { once: true });
+
+            try {
+              preview.currentTime = targetTime;
+            } catch {
+              preview.removeEventListener('seeked', onSeeked);
+              finalizeFromCurrentFrame();
+            }
           };
 
           preview.onerror = () => {
-            URL.revokeObjectURL(preview.src);
+            cleanup();
             resolve(null);
           };
         });

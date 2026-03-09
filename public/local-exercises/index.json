@@ -1,10 +1,10 @@
 [
   {
     "id": "a8qm1p6xwbommh2dutd",
-    "name": "kfjsdljf",
+    "name": "arm extension",
     "category_id": null,
     "category_name": null,
-    "description": "d",
+    "description": "arm extension exercise for strength",
     "body_part": "Core",
     "injury_category": "d",
     "focus_joints": [
@@ -37,60 +37,11 @@
     "created_at": "2026-03-08T01:19:12.193Z"
   },
   {
-    "id": "tr0gzmft3mmmmh3u1b9",
-    "name": "uihiuh",
-    "category_id": null,
-    "category_name": null,
-    "description": "huyyutyut",
-    "body_part": "Arm",
-    "injury_category": "uhiuh",
-    "focus_joints": [
-      "wrist"
-    ],
-    "steps": [
-      {
-        "id": 1,
-        "label": "pull arm back ",
-        "start_frame": 0,
-        "end_frame": 102
-      },
-      {
-        "id": 2,
-        "label": "pull arm forward",
-        "start_frame": 102,
-        "end_frame": 143
-      },
-      {
-        "id": 3,
-        "label": "turn to side",
-        "start_frame": 143,
-        "end_frame": 180
-      },
-      {
-        "id": 4,
-        "label": "repeat action",
-        "start_frame": 181,
-        "end_frame": 320
-      },
-      {
-        "id": 5,
-        "label": "neutral",
-        "start_frame": 320,
-        "end_frame": 321
-      }
-    ],
-    "video_url": "/local-exercises/tr0gzmft3mmmmh3u1b9/video.mp4",
-    "motion_data_url": "/local-exercises/tr0gzmft3mmmmh3u1b9/keypoints.json",
-    "thumbnail_url": "",
-    "created_by": null,
-    "created_at": "2026-03-08T01:59:46.725Z"
-  },
-  {
     "id": "9a33e6w4pbrmmhajvep",
     "name": "elbow extension",
     "category_id": null,
     "category_name": null,
-    "description": "idk",
+    "description": "elbow extension exercise for strength",
     "body_part": "Arm",
     "injury_category": "elbow injury",
     "focus_joints": [
@@ -124,40 +75,46 @@
     "created_at": "2026-03-08T05:07:49.825Z"
   },
   {
-    "id": "ucoo37sethmmhaojzl",
-    "name": "sa",
+    "id": "kbrq2r024qmmhi3p5e",
+    "name": "Arm fold to 90 degrees",
     "category_id": null,
     "category_name": null,
-    "description": "f",
-    "body_part": "",
-    "injury_category": "b",
+    "description": "strengthening, and range of motion",
+    "body_part": "Arm",
+    "injury_category": "elbow injury",
     "focus_joints": [
-      "fq"
+      "elbow"
     ],
     "steps": [
       {
         "id": 1,
         "label": "Start Position",
         "start_frame": 0,
-        "end_frame": 85
+        "end_frame": 5
       },
       {
         "id": 2,
-        "label": "Main Movement",
-        "start_frame": 86,
-        "end_frame": 170
+        "label": "move to 90 degrees",
+        "start_frame": 5,
+        "end_frame": 70
       },
       {
         "id": 3,
-        "label": "Return to Neutral",
-        "start_frame": 171,
-        "end_frame": 257
+        "label": "Come back to 180 degrees",
+        "start_frame": 70,
+        "end_frame": 139
+      },
+      {
+        "id": 4,
+        "label": "hold",
+        "start_frame": 140,
+        "end_frame": 156
       }
     ],
-    "video_url": "/local-exercises/ucoo37sethmmhaojzl/video.mov",
-    "motion_data_url": "/local-exercises/ucoo37sethmmhaojzl/keypoints.json",
-    "thumbnail_url": "/local-exercises/ucoo37sethmmhaojzl/thumbnail.jpg",
+    "video_url": "/local-exercises/kbrq2r024qmmhi3p5e/video.mp4",
+    "motion_data_url": "/local-exercises/kbrq2r024qmmhi3p5e/keypoints.json",
+    "thumbnail_url": "/local-exercises/kbrq2r024qmmhi3p5e/thumbnail.jpg",
     "created_by": null,
-    "created_at": "2026-03-08T05:11:28.305Z"
+    "created_at": "2026-03-08T08:39:12.146Z"
   }
 ]

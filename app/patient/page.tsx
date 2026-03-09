@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Play, Clock, Target, CheckCircle } from 'lucide-react';
+import { Play, Clock, Target, CheckCircle, Flame, Trophy } from 'lucide-react';
 import { SARAH_PATIENT_ID } from '@/lib/demo-constants';
 
 type Assignment = {
@@ -93,6 +93,13 @@ export default function PatientHome() {
     [cards]
   );
 
+  const streakDays = 9;
+  const romGained = 18;
+  const goalRom = 80;
+  const currentWeek = 3;
+  const targetWeek = 6;
+  const recoveryProgress = Math.max(0, Math.min(100, (currentWeek / targetWeek) * 100));
+
   return (
     <div>
       <div className="mb-8">
@@ -101,6 +108,17 @@ export default function PatientHome() {
         <p className="text-teal-600 text-sm">
           {completedCount} of {cards.length} exercises complete
         </p>
+
+        <div className="mt-4 flex items-center gap-2">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-teal-300/20 bg-teal-300/10 text-xs font-mono text-teal-300">
+            <Flame className="w-3.5 h-3.5" />
+            {streakDays}-day streak
+          </div>
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-teal-300/20 bg-teal-300/10 text-xs font-mono text-teal-300">
+            <Trophy className="w-3.5 h-3.5" />
+            {completedCount}/{cards.length} goals today
+          </div>
+        </div>
       </div>
 
       {loading ? (
@@ -141,15 +159,15 @@ export default function PatientHome() {
                   <div className="flex gap-6 text-center">
                     <div>
                       <div className="label mb-1">Last Accuracy</div>
-                      <div className="text-sm font-mono text-teal-300">{ex.accuracy_last}%</div>
+                      <div className="text-sm font-mono text-teal-50">{ex.accuracy_last}%</div>
                     </div>
                     <div>
                       <div className="label mb-1">Last ROM</div>
-                      <div className="text-sm font-mono text-teal-300">{ex.rom_last}°</div>
+                      <div className="text-sm font-mono text-teal-50">{ex.rom_last}°</div>
                     </div>
                     <div>
                       <div className="label mb-1">Progress</div>
-                      <div className="text-sm font-mono text-teal-300">{ex.completed_today}/{ex.sets_per_day}</div>
+                      <div className="text-sm font-mono text-teal-50">{ex.completed_today}/{ex.sets_per_day}</div>
                     </div>
                   </div>
 
@@ -175,6 +193,49 @@ export default function PatientHome() {
           })}
         </div>
       )}
+
+      <div className="card mt-8 border-teal-300/20">
+        <div className="label mb-1">Recovery Dashboard</div>
+        <h2 className="text-teal-100 font-medium mb-4">Current Progress</h2>
+
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <div className="card-sm text-center bg-teal-300/5 border border-teal-300/10">
+            <div className="label mb-1">Current Streak</div>
+            <div className="text-2xl font-mono text-teal-50">{streakDays} days</div>
+          </div>
+          <div className="card-sm text-center bg-teal-300/5 border border-teal-300/10">
+            <div className="label mb-1">ROM Gained</div>
+            <div className="text-2xl font-mono text-teal-50">+{romGained}°</div>
+          </div>
+          <div className="card-sm text-center bg-teal-300/5 border border-teal-300/10">
+            <div className="label mb-1">Goal ROM</div>
+            <div className="text-2xl font-mono text-teal-50">{goalRom}°</div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-teal-300/10 bg-teal-300/5 p-4">
+          <div className="flex items-center justify-between text-xs font-mono text-teal-600 mb-2">
+            <span>Recovery Timeline</span>
+            <span>Week {currentWeek} of {targetWeek}</span>
+          </div>
+
+          <div className="relative h-2 rounded-full bg-teal-300/10 overflow-hidden mb-3">
+            <div
+              className="h-full bg-teal-300 rounded-full"
+              style={{ width: `${recoveryProgress}%` }}
+            />
+            <div
+              className="absolute top-1/2 -translate-y-1/2 w-3.5 h-3.5 rounded-full bg-teal-50 border border-teal-900"
+              style={{ left: `calc(${recoveryProgress}% - 6px)` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-teal-400 font-mono">Week 3: Current</span>
+            <span className="text-teal-50 font-mono">Week 6: Playing Tennis</span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

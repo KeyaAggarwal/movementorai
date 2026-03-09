@@ -22,7 +22,7 @@ const playfair = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: 'PhysioAI — AI-Assisted Rehabilitation',
+  title: 'MoveMentor — AI-Assisted Rehabilitation',
   description: 'Real-time pose-guided rehabilitation platform for therapists and patients.',
 };
 
