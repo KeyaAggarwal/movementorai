@@ -1,6 +1,6 @@
 # PhysioAI — AI-Assisted Rehabilitation Platform
 
-Real-time pose-guided rehabilitation using MoveNet + TensorFlow.js. Ghost skeleton overlay, automatic rep counting, ROM tracking. Fully local — **no cloud services required**.
+Real-time pose-guided rehabilitation using MoveNet + TensorFlow.js. Ghost skeleton overlay, automatic rep counting, ROM tracking. 
 
 ---
 
@@ -9,7 +9,7 @@ Real-time pose-guided rehabilitation using MoveNet + TensorFlow.js. Ghost skelet
 | Layer | Technology |
 |-------|-----------|
 | Framework | Next.js 14 (App Router) |
-| Database | **SQLite** via `better-sqlite3` (local file, zero config) |
+| Database | **SQLite** via `better-sqlite3`|
 | Pose Detection | MoveNet via TensorFlow.js + WebGL |
 | AI Feedback | Google Gemini Flash (free tier) |
 | Styling | Tailwind CSS |
